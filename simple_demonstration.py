@@ -5,6 +5,7 @@ import sys
 import time
 import os
 import numpy as np
+import itertools # for different contexts
 
 
 #####################################################
@@ -17,11 +18,14 @@ import numpy as np
 # - distance-to-identity of each parameter matrix
 #####################################################
 
+# device = 'cpu'
+
 #use cuda if available, else use cpu
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #torch.cuda.set_device(1)
 # import the model and some useful functions
-from linear_transformer import Transformer_F, attention, generate_data, in_context_loss
+import linear_transformer
+from linear_transformer import Transformer_F, attention, generate_data, in_context_loss2
 
 # set up some print options
 np.set_printoptions(precision = 2, suppress = True)
@@ -56,18 +60,22 @@ max_iters = 10000  # Number of Iterations to run
 hist_stride = 1  # stride for saved model paramters in `train.ipynb'
 stride = 100
 
+possible_combinations =  list(itertools.product([0,1], repeat=N))
+
+
 # a convenience function for taking a step and clipping
-def clip_and_step(allparam, optimizer, clip_r = None):
+def clip_and_step(allparam, optim, clip_r = None):
     norm_p=None
     grad_all = allparam.grad
     if clip_r is not None:
         norm_p = grad_all.norm().item()
         if norm_p > clip_r:
             grad_all.mul_(clip_r/norm_p)
-    optimizer.step()
+    optim.step()
     return norm_p
 
 # %%
+# training
 filename_format = '/linearTF_exp_{}_{}_{}.pth'
 filename = filename_format.format(n_layer, N, d)
 filename = (cur_dir + filename)
@@ -86,7 +94,7 @@ for key in keys:
     
     #set seed and initialize model
     torch.manual_seed(opt_seed)
-    model = Transformer_F(n_layer, 1, d, var)
+    model = Transformer_F(n_layer, n_head, d, var)
     model.to(device)
     #initialize algorithm. Important: set beta = 0.9 for adam, 0.999 is very slow
     if alg == 'sgd':
@@ -99,29 +107,56 @@ for key in keys:
     np.random.seed(prob_seed)
     torch.manual_seed(prob_seed)
     
+
     for t in range(max_iters):
         start = time.time()
         # save model parameters
         if t%hist_stride ==0:
             hist_dict[key].append(model.allparam.clone().detach())
         #  generate a new batch of training set
-        Z, y = generate_data(mode,N,d,B,shape_k)
-        Z = Z.to(device)
-        y = y.to(device)
-        loss = in_context_loss(model, Z, y)
-        
-        # compute gradient, take step
-        loss.backward()
-        norms = clip_and_step(model.allparam, optimizer, clip_r=clip_r)
-        optimizer.zero_grad()
-        end=time.time()
-        if t%100 ==0 or t<5:
-            print('iter {} | Loss: {}  time: {}  gradnorm: {}'.format(t,loss.item(), end-start, norms))
+        Z, y, Z_train = generate_data(mode,N,d,B,shape_k)
+
+        # Z = Z.to(device) # type: ignore
+        # y = y.to(device)
+
+        # if we want to loop all instead
+        for option in possible_combinations:
+            if not all(option):
+                continue
+
+        # for _ in range(1): # to have same indentation, when not looping all but choosing random option
+        #     # choose random subset from context
+        #     # start from index 1 to avoid all zero mask
+        #     # print(len(possible_combinations))
+        #     selection = np.random.randint(1,len(possible_combinations),1)[0]
+        #     # print(selection)
+        #     option = possible_combinations[selection]
+        #     # print(option,'len ', sum(option))
+
+            # for both options
+
+            mask = torch.tensor( option, dtype=bool )
+            curr_context    = Z_train[:,mask,:]
+            # curr_y          = Z_train[:,mask,-1]
+            curr_y          = Z_train[:,mask,-1]#.detach().clone()
+            # print(curr_y[...,-3:])
+            curr_context[:,-1,-1] = 0
+            # print(curr_context[...,-1][...,-3:])
+            # print(curr_y[...,-3:]) # with these prints => should work without detach.clone
+
+            loss = in_context_loss2(model(curr_context)[:,mask,:], curr_y)
+            
+            # compute gradient, take step
+            loss.backward()
+            norms = clip_and_step(model.allparam, optimizer, clip_r=clip_r)
+            optimizer.zero_grad()
+            end=time.time()
+            if t%100 ==0 or t<5:
+                print('iter {} | Loss: {}  time: {}  gradnorm: {}'.format(t,loss.item(), end-start, norms))
     #save to 
 torch.save({'hist_dict':hist_dict}, filename)
 
 # %%
-####################################
 # compute test loss
 ####################################
 hist_dict = torch.load(filename)['hist_dict']
@@ -133,17 +168,39 @@ for key in hist_dict:
     
     np.random.seed(99)
     torch.manual_seed(99)
-    Z, y = generate_data(mode,N,d,B,shape_k)
-    Z = Z.to(device)
-    y = y.to(device)
-    model = Transformer_F(n_layer, n_head, d, var).to(device)
-    for t in range(0,max_iters,stride):
-        with torch.no_grad():
-            model.allparam.copy_(hist_dict[key][t])
-        loss_dict[key][t//stride] = in_context_loss(model, Z, y).item()
+    Z, y, Z_train = generate_data(mode,N,d,B,shape_k)
+    # Z = Z.to(device)
+    # y = y.to(device)
+
+    # if we want to loop all instead
+    for option in possible_combinations:
+        if not all(option):
+            continue
+
+    # for _ in range(1): # to have same indentation, when not looping all but choosing random option
+    #     # choose random subset from context
+    #     # start from index 1 to avoid all zero mask
+    #     # print(len(possible_combinations))
+    #     selection = np.random.randint(1,len(possible_combinations),1)[0]
+    #     # print(selection)
+    #     option = possible_combinations[selection]
+    #     # print(option,'len ', sum(option))
+
+        # for both options
+
+        mask = torch.tensor( option, dtype=bool )
+        curr_context    = Z[:,1:,:][:,mask,:] # need to leave one out for last test one
+        curr_y          = Z[:,1:,:][:,mask,-1]#.detach().clone()
+        curr_context[:,-1,-1] = 0
+
+        model = Transformer_F(n_layer, n_head, d, var).to(device)
+        for t in range(0,max_iters,stride):
+            with torch.no_grad():
+                model.allparam.copy_(hist_dict[key][t])
+            output = model(curr_context)[:,mask,:]
+            loss_dict[key][t//stride] = in_context_loss2(output, curr_y).item()
 
 # %%
-####################################
 # plot the test loss with error bars
 ####################################
 
@@ -210,7 +267,6 @@ for l in range(n_layer):
     
 
 # %%
-########################################################
 # plot the distance-to-identity of each matrix with time
 ########################################################
 
@@ -239,8 +295,6 @@ for key in hist_dict:
                 dist_dict[key][i,j,t//stride] = compute_dist_identity(allparam[i,0,j,:,:])
 
 # %%
-
-####################################
 # plot distances
 ####################################
 
