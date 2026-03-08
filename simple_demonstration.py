@@ -1,4 +1,27 @@
 # %%
+# get header to server
+
+! for file in \
+'linear_transformer.py'\
+; do\
+    echo "downloading ${file} ... ";\
+  curl \
+  -o "${file}"\
+  -L "https://raw.githubusercontent.com/jangtze/LinearTransformer/refs/heads/padding/${file}";\
+done
+
+# %%
+!nvidia-smi
+
+# %%
+# authenticate gdrive to upload results
+# doesnt work in vscode colab
+
+# from google.colab import auth
+# auth.authenticate_user()  # must authenticate
+
+
+# %%
 import torch
 from matplotlib import pyplot as plt
 import sys
@@ -119,20 +142,22 @@ for key in keys:
         # Z = Z.to(device) # type: ignore
         # y = y.to(device)
 
-        # if we want to loop all instead
-        for option in possible_combinations:
-            if not all(option):
-                continue
+        # # if we want to loop all instead
+        # for option in possible_combinations:
+        #     if not all(option):
+        #         continue
 
-        # for _ in range(1): # to have same indentation, when not looping all but choosing random option
-        #     # choose random subset from context
-        #     # start from index 1 to avoid all zero mask
-        #     # print(len(possible_combinations))
-        #     selection = np.random.randint(1,len(possible_combinations),1)[0]
-        #     # print(selection)
-        #     option = possible_combinations[selection]
-        #     # print(option,'len ', sum(option))
+        # chosing a random mask
+        for _ in range(1): # to have same indentation, when not looping all but choosing random option
+            # choose random subset from context
+            # start from index 1 to avoid all zero mask
+            # print(len(possible_combinations))
+            selection = np.random.randint(1,len(possible_combinations),1)[0]
+            # print(selection)
+            option = possible_combinations[selection]
+            # print(option,'len ', sum(option))
 
+            ##################
             # for both options
 
             mask = torch.tensor( option, dtype=bool )
@@ -144,7 +169,9 @@ for key in keys:
             # print(curr_context[...,-1][...,-3:])
             # print(curr_y[...,-3:]) # with these prints => should work without detach.clone
 
-            loss = in_context_loss2(model(curr_context)[:,mask,:], curr_y)
+            output = model(curr_context) # full length with 0 padding after first sum(mask) (= amount of non-zeros in mask)
+            predicitons = output[:,:sum(mask),:]
+            loss = in_context_loss2(predicitons, curr_y)
             
             # compute gradient, take step
             loss.backward()
@@ -189,16 +216,19 @@ for key in hist_dict:
         # for both options
 
         mask = torch.tensor( option, dtype=bool )
-        curr_context    = Z[:,1:,:][:,mask,:] # need to leave one out for last test one
-        curr_y          = Z[:,1:,:][:,mask,-1]#.detach().clone()
+        # curr_context    = Z[:,1:,:][:,mask,:] # need to leave one out for last test one
+        # curr_y          = Z[:,1:,:][:,mask,-1]#.detach().clone()
+        curr_context    = Z[:,mask,:] # need to leave one out for last test one
+        curr_y          = Z[:,mask,-1]#.detach().clone()
         curr_context[:,-1,-1] = 0
 
         model = Transformer_F(n_layer, n_head, d, var).to(device)
         for t in range(0,max_iters,stride):
             with torch.no_grad():
                 model.allparam.copy_(hist_dict[key][t])
-            output = model(curr_context)[:,mask,:]
-            loss_dict[key][t//stride] = in_context_loss2(output, curr_y).item()
+            output = model(curr_context) # full length with 0 padding after first sum(mask) (= amount of non-zeros in mask)
+            predicitons = output[:,:sum(mask),:]            
+            loss_dict[key][t//stride] = in_context_loss2(predicitons, curr_y).item()
 
 # %%
 # plot the test loss with error bars
@@ -341,6 +371,4 @@ print((dist_dict[(0,)][0,0,10]- dist_dict[(1,)][0,0,10]).norm())
 
 
 # %%
-
-
 
