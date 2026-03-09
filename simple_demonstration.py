@@ -149,23 +149,28 @@ for key in keys:
 
         # chosing a random mask
         for _ in range(1): # to have same indentation, when not looping all but choosing random option
-            # choose random subset from context
-            # start from index 1 to avoid all zero mask
-            # print(len(possible_combinations))
-            selection = np.random.randint(1,len(possible_combinations),1)[0]
-            # print(selection)
-            option = possible_combinations[selection]
-            # print(option,'len ', sum(option))
+            # # choose random subset from context
+            # # start from index 1 to avoid all zero mask
+            # # print(len(possible_combinations))
+            # selection = np.random.randint(1,len(possible_combinations),1)[0]
+            # # print(selection)
+            # option = possible_combinations[selection]
+            # # print(option,'len ', sum(option))
 
+            # train full
+            option = torch.ones((N,))
+            
             ##################
             # for both options
 
             mask = torch.tensor( option, dtype=bool )
             curr_context    = Z_train[:,mask,:]
             # curr_y          = Z_train[:,mask,-1]
-            curr_y          = Z_train[:,mask,-1]#.detach().clone()
+            # curr_y          = Z_train[:,mask,-1]#.detach().clone()
+            curr_y          = Z_train[:,mask,-1].detach().clone()
             # print(curr_y[...,-3:])
-            curr_context[:,-1,-1] = 0
+            # curr_context[:,-1,-1] = 0
+            curr_context[:,-1,-1].zero_()
             # print(curr_context[...,-1][...,-3:])
             # print(curr_y[...,-3:]) # with these prints => should work without detach.clone
 
@@ -199,28 +204,30 @@ for key in hist_dict:
     # Z = Z.to(device)
     # y = y.to(device)
 
-    # if we want to loop all instead
-    for option in possible_combinations:
-        if not all(option):
-            continue
+    # # if we want to loop all instead
+    # for option in possible_combinations:
+    #     if not all(option):
+    #         continue
 
-    # for _ in range(1): # to have same indentation, when not looping all but choosing random option
-    #     # choose random subset from context
-    #     # start from index 1 to avoid all zero mask
-    #     # print(len(possible_combinations))
-    #     selection = np.random.randint(1,len(possible_combinations),1)[0]
-    #     # print(selection)
-    #     option = possible_combinations[selection]
-    #     # print(option,'len ', sum(option))
+    for _ in range(1): # to have same indentation, when not looping all but choosing random option
+        # # choose random subset from context
+        # # start from index 1 to avoid all zero mask
+        # # print(len(possible_combinations))
+        # selection = np.random.randint(1,len(possible_combinations),1)[0]
+        # # print(selection)
+        # option = possible_combinations[selection]
+        # # print(option,'len ', sum(option))
 
+        # test full
+        option = torch.ones((N,))
+        
         # for both options
-
         mask = torch.tensor( option, dtype=bool )
-        # curr_context    = Z[:,1:,:][:,mask,:] # need to leave one out for last test one
-        # curr_y          = Z[:,1:,:][:,mask,-1]#.detach().clone()
         curr_context    = Z[:,mask,:] # need to leave one out for last test one
-        curr_y          = Z[:,mask,-1]#.detach().clone()
-        curr_context[:,-1,-1] = 0
+        # curr_y          = Z[:,mask,-1]#.detach().clone()
+        # curr_context[:,-1,-1] = 0
+        curr_y          = Z[:,mask,-1].detach().clone()
+        curr_context[:,-1,-1].zero_()
 
         model = Transformer_F(n_layer, n_head, d, var).to(device)
         for t in range(0,max_iters,stride):
