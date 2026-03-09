@@ -103,10 +103,13 @@ filename_format = '/linearTF_exp_{}_{}_{}.pth'
 filename = filename_format.format(n_layer, N, d)
 filename = (cur_dir + filename)
 hist_dict = {}
+train_loss_dict = {}
 
 
 seeds = [0,1,2] #for demonstration purpose, just use 3 seeds
 keys = [(s,) for s in seeds]
+print("start whole training ...")
+start_full_training = time.time()
 for key in keys:
     sd = key[0]
     
@@ -114,6 +117,7 @@ for key in keys:
     opt_seed = sd
     
     hist_dict[key] = []
+    train_loss_dict[key] = torch.zeros(max_iters//stride)
     
     #set seed and initialize model
     torch.manual_seed(opt_seed)
@@ -130,7 +134,8 @@ for key in keys:
     np.random.seed(prob_seed)
     torch.manual_seed(prob_seed)
     
-
+    print("start training for key ", key)
+    start_training = time.time()
     for t in range(max_iters):
         start = time.time()
         # save model parameters
@@ -178,21 +183,60 @@ for key in keys:
             predicitons = output[:,:sum(mask),:]
             loss = in_context_loss2(predicitons, curr_y)
             
+            # save training loss
+            if t%stride == 0:
+                train_loss_dict[key][t//stride] = loss
+                
             # compute gradient, take step
             loss.backward()
             norms = clip_and_step(model.allparam, optimizer, clip_r=clip_r)
             optimizer.zero_grad()
             end=time.time()
             if t%100 ==0 or t<5:
-                print('iter {} | Loss: {}  time: {}  gradnorm: {}'.format(t,loss.item(), end-start, norms))
+                print('iter {} | Loss: {}  time: {}s  gradnorm: {}'.format(t,loss.item(), end-start, norms))
     #save to 
+    end_training = time.time()
+    print("end training for key ", key, " time ", end_training-start_training, "s")
+end_full_training = time.time()
+print("end full training: time ", end_full_training-start_full_training, "s")
 torch.save({'hist_dict':hist_dict}, filename)
+
+# %%
+# plot the train loss with error bars
+####################################
+
+fig_dir = 'figures' 
+os.makedirs(fig_dir, exist_ok=True)
+
+fig, ax = plt.subplots(1, 1,figsize = (7, 6))
+
+train_losses = torch.zeros(len(seeds), max_iters//stride)
+keys = train_loss_dict.keys()
+for idx, key in enumerate(keys):
+    train_losses[idx,:] = train_loss_dict[key]
+train_losses_mean = torch.mean(train_losses, axis=0).detach().numpy()
+train_losses_std = torch.std(train_losses, axis=0).detach().numpy()
+ax.plot(range(0,max_iters,stride), train_losses_mean, color = 'red', lw = 3)#, label='Adam')
+ax.fill_between(range(0,max_iters,stride), train_losses_mean-train_losses_std, train_losses_mean+train_losses_std, color = 'red', alpha = 0.2)
+ax.set_xlabel('Iteration',fontsize=40)
+ax.set_ylabel('ICL Train Loss',fontsize=40)
+ax.tick_params(axis='both', which='major', labelsize=30, width = 3, length = 10)
+ax.tick_params(axis='both', which='minor', labelsize=20, width = 3, length = 5)
+#ax.legend(fontsize=30)
+ax.set_yscale('log')
+
+
+plt.tight_layout()
+plt.savefig(fig_dir + '/simple_demonstration_train_loss_plot.pdf', dpi=600)
+
 
 # %%
 # compute test loss
 ####################################
 hist_dict = torch.load(filename)['hist_dict']
 loss_dict = {}
+print("start whole testing ...")
+start_full_testing = time.time()
 for key in hist_dict:
     sd = key[0]
     
@@ -200,43 +244,63 @@ for key in hist_dict:
     
     np.random.seed(99)
     torch.manual_seed(99)
-    Z, y, Z_train = generate_data(mode,N,d,B,shape_k)
+    Z, y, Z_train   = generate_data(mode,N,d,B,shape_k)
+    Z[:,-1,-1]      = y # need to write y back in to keep the rest of the treatment the same
     # Z = Z.to(device)
     # y = y.to(device)
 
-    # # if we want to loop all instead
-    # for option in possible_combinations:
-    #     if not all(option):
-    #         continue
+    model = Transformer_F(n_layer, n_head, d, var).to(device)
 
-    for _ in range(1): # to have same indentation, when not looping all but choosing random option
-        # # choose random subset from context
-        # # start from index 1 to avoid all zero mask
-        # # print(len(possible_combinations))
-        # selection = np.random.randint(1,len(possible_combinations),1)[0]
-        # # print(selection)
-        # option = possible_combinations[selection]
-        # # print(option,'len ', sum(option))
-
-        # test full
-        option = torch.ones((N,))
+    for t in range(0,max_iters,stride):
         
-        # for both options
-        mask = torch.tensor( option, dtype=bool )
-        curr_context    = Z[:,mask,:] # need to leave one out for last test one
-        # curr_y          = Z[:,mask,-1]#.detach().clone()
-        # curr_context[:,-1,-1] = 0
-        curr_y          = Z[:,mask,-1].detach().clone()
-        curr_context[:,-1,-1].zero_()
+        loss_list = torch.zeros((len(possible_combinations),))
 
-        model = Transformer_F(n_layer, n_head, d, var).to(device)
-        for t in range(0,max_iters,stride):
+        # if we want to loop all instead
+        # for option in possible_combinations:
+        #     if not all(option):
+        #         continue
+
+        # chosen_combinations = possible_combinations[1:] # all ~ 1M
+        # chosen_combinations = [p for p in possible_combinations if sum(p)==10] # all with context of 10 examples ~200k
+        # chosen_combinations = [p for p in possible_combinations if sum(p)>=10] # all with context of at least 10 examples ~ 600k
+        # chosen_combinations = [p for p in possible_combinations if sum(p)>=12] # all with context of at least 12 examples ~ 260k
+        # chosen_combinations = [p for p in possible_combinations if sum(p)>=15] # all with context of at least 15 examples ~ 21k
+        chosen_combinations = [p for p in possible_combinations if sum(p)>=18] # all with context of at least 18 examples =211
+
+        for opt_idx, option in enumerate(chosen_combinations):
+
+        # for _ in range(1): # to have same indentation, when not looping all but choosing random option
+
+            # # choose random subset from context
+            # # start from index 1 to avoid all zero mask
+            # # print(len(possible_combinations))
+            # selection = np.random.randint(1,len(possible_combinations),1)[0]
+            # # print(selection)
+            # option = possible_combinations[selection]
+            # # print(option,'len ', sum(option))
+
+            # # test full
+            # option = torch.ones((N,))
+            
+            # for both options
+            mask = torch.tensor( option, dtype=bool )
+            curr_context    = Z[:,mask,:] # need to leave one out for last test one
+            # curr_y          = Z[:,mask,-1]#.detach().clone()
+            # curr_context[:,-1,-1] = 0
+            curr_y          = Z[:,mask,-1].detach().clone()
+            curr_context[:,-1,-1].zero_()
+
             with torch.no_grad():
                 model.allparam.copy_(hist_dict[key][t])
+
             output = model(curr_context) # full length with 0 padding after first sum(mask) (= amount of non-zeros in mask)
             predicitons = output[:,:sum(mask),:]            
-            loss_dict[key][t//stride] = in_context_loss2(predicitons, curr_y).item()
+            loss_list[opt_idx] = in_context_loss2(predicitons, curr_y).item()
+        non_zero_loss_mask = torch.tensor(loss_list, dtype=bool)
+        loss_dict[key][t//stride] = loss_list[non_zero_loss_mask].mean()
 
+end_full_testing = time.time()
+print("end full testing: time ", end_full_testing-start_full_testing, "s")
 # %%
 # plot the test loss with error bars
 ####################################
