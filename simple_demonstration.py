@@ -106,24 +106,27 @@ os.makedirs(cur_dir, exist_ok=True)
 # %%
 # Set up problem parameters
 
-lr = 0.001
-clip_r = 1000
-alg = 'adam'
+# data
 mode = 'normal'
-
-n_layer = 3  # number of layers of transformer
-N = 20     # context length
-d = 5        # dimension
-
-
-n_head = 1  # 1-headed attention
 B = 4000  # 1000 minibatch size
 var = 0.0001  # initializations scale of transformer parameter
 shape_k = 0.1  # shape_k: parameter for Gamma distributed covariates
-max_iters = 10000  # Number of Iterations to run
+
+# model
+n_layer = 3  # number of layers of transformer
+n_head = 1  # 1-headed attention
+N = 20     # context length
+d = 5        # dimension
+
+# optimizaton / learning
+alg = 'adam'
+max_iters = 100  # Number of Iterations to run
+lr = 0.001
 half_lr_each_nth_step = None
+clip_r = 1000
+
 hist_stride = 1  # stride for saved model paramters in `train.ipynb'
-stride = 100
+stride = 10
 
 possible_combinations =  list(itertools.product([0,1], repeat=N))
 
@@ -307,6 +310,11 @@ for idx, key in enumerate(keys):
     train_losses[idx,:,:] = train_loss_dict[key]
 train_losses_mean = torch.mean(train_losses, axis=(0,-1)).detach().numpy()
 train_losses_std = torch.std(train_losses, axis=(0,-1)).detach().numpy()
+
+train_loss_mean_final   = train_losses_mean[-1].item()
+train_loss_std_final    = train_losses_std[-1].item()
+train_loss_min          = min(train_losses_mean).item()
+
 ax.plot(range(0,max_iters,stride), train_losses_mean, color = 'red', lw = 3)#, label='Adam')
 ax.fill_between(range(0,max_iters,stride), train_losses_mean-train_losses_std, train_losses_mean+train_losses_std, color = 'red', alpha = 0.2)
 ax.set_xlabel('Iteration',fontsize=30)
@@ -431,6 +439,11 @@ for idx, key in enumerate(keys):
     losses[idx,:,:] = loss_dict[key]
 losses_mean = torch.mean(losses, axis=(0,-1)) # over seed and different combinations of context examples
 losses_std = torch.std(losses, axis=(0,-1))
+
+test_loss_mean_final    = losses_mean[-1].item()
+test_loss_std_final     = losses_std[-1].item()
+test_loss_min           = min(losses_mean).item()
+
 ax.plot(range(0,max_iters,stride), losses_mean, color = 'red', lw = 3)#, label='Adam')
 ax.fill_between(range(0,max_iters,stride), losses_mean-losses_std, losses_mean+losses_std, color = 'red', alpha = 0.2)
 ax.set_xlabel('Iteration',fontsize=30)
@@ -597,14 +610,16 @@ variables_list = [
     (i, globals()[i]) if i in globals().keys()
     else (i, 'n/a')
     for i in [
-        'N', 'd', 'n_layer', 'n_head',
+        'mode', 'B', 'var', 'shape_k', # data
+        'd', 'N', 'n_layer', 'n_head', # model
+        'alg', 'clip_r', 'max_iters',  # training
         'lr', 'half_lr_each_nth_step',
-        'mode', 'alg', 'clip_r', 
-        'B', 'var', 'shape_k', 'max_iters', 
-        'subset_size', 'amount_of_examples',
+        # 'subset_size', 'amount_of_examples', # is in specs
         'hist_stride', 'stride', 
         'train_mask_specs', 'test_mask_specs',
-        'train_time', 'test_time'
+        'train_time', 'test_time',
+        'train_loss_mean_final', 'train_loss_std_final', 'train_loss_min',
+        'test_loss_mean_final', 'test_loss_std_final', 'test_loss_min'
         ]
     ]
 
