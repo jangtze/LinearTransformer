@@ -96,9 +96,9 @@ for key in keys:
     # initialize initial training batch
     np.random.seed(prob_seed)
     torch.manual_seed(prob_seed)
-    gaus = torch.FloatTensor(5,5).uniform_(-1,1).cuda()
-    U = torch.linalg.svd (gaus)[0].cuda()
-    D = torch.diag(torch.FloatTensor([1,1,1/2,1/4,1])).cuda()
+    gaus = torch.FloatTensor(5,5).uniform_(-1,1).to(device)
+    U = torch.linalg.svd (gaus)[0].to(device)
+    D = torch.diag(torch.FloatTensor([1,1,1/2,1/4,1])).to(device)
     Z, y = generate_data(mode,N,d,B,shape_k, U, D)
     Z = Z.to(device)
     y = y.to(device)

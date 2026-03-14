@@ -14,7 +14,8 @@ from torch import nn
 import numpy as np
 
 # device = 'cpu'
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = 'xpu' # intel arc ipex
 
 # Definition of a single linear attention unit for linear-regression data
 # P is the value matrix

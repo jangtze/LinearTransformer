@@ -1,36 +1,42 @@
 # %%
-# get header to server
+# get header to colab server
 
-! for file in \
-'linear_transformer.py'\
-; do\
-    echo "downloading ${file} ... ";\
-  curl \
-  -o "${file}"\
-  -L "https://raw.githubusercontent.com/jangtze/LinearTransformer/refs/heads/padding/${file}";\
-done
-
-# %%
-!nvidia-smi
+# ! for file in \
+# 'linear_transformer.py'\
+# ; do\
+#     echo "downloading ${file} ... ";\
+#   curl \
+#   -o "${file}"\
+#   -L "https://raw.githubusercontent.com/jangtze/LinearTransformer/refs/heads/padding/${file}";\
+# done
 
 # %%
-# authenticate gdrive to upload results
-# doesnt work in vscode colab
+# ### tikzplotlib doesnt work no more
+# change matplotlib version to 3.7
+# ! pip uninstall -y matplotlib \
+# && pip install "matplotlib==3.7.1" \
+# && pip install tikzplotlib
+# ! pip install tikzplotlib
+# fix webcolors problem
+# print(os.path.dirname(tikzplotlib.__file__))
+# >>> /usr/local/lib/python3.12/dist-packages/tikzplotlib
+# ! sed -i "s/for h, name in webcolors.CSS3_HEX_TO_NAMES.items():/for name in webcolors.names('css3'):\n\t\th = webcolors.name_to_hex(name)/" /usr/local/lib/python3.12/dist-packages/tikzplotlib/_color.py
 
-# from google.colab import auth
-# auth.authenticate_user()  # must authenticate
-
+# ### use matplot2tikz
+# ! pip install matplot2tikz
 
 # %%
-import torch
 from matplotlib import pyplot as plt
+import matplot2tikz as tikzplotlib
 import sys
 import time
 import os
 import numpy as np
 import itertools # for different contexts
 
+import torch
 
+import pandas as pd
 #####################################################
 # In this notebook, we train a 3-layer linear transformer with
 # - context-length 20
@@ -41,26 +47,61 @@ import itertools # for different contexts
 # - distance-to-identity of each parameter matrix
 #####################################################
 
-# device = 'cpu'
+# use intel arc ipex
+import intel_extension_for_pytorch as ipex
+# # Move to XPU
+device = 'xpu' # intel arc ipex
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-#use cuda if available, else use cpu
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-#torch.cuda.set_device(1)
 # import the model and some useful functions
-import linear_transformer
 from linear_transformer import Transformer_F, attention, generate_data, in_context_loss2
 
+# %%
+# check gpu
+
+# !nvidia-smi
+
+# https://christianjmills.com/posts/intel-pytorch-extension-tutorial/native-ubuntu/
+def get_public_properties(obj):
+    """
+    Extract all public properties from an object.
+
+    Args:
+    obj: The object to extract properties from.
+
+    Returns:
+    dict: A dictionary containing the object's public properties and their values.
+    """
+    return {
+        prop: getattr(obj, prop)
+        for prop in dir(obj)
+        if not prop.startswith("__") and not callable(getattr(obj, prop))
+    }
+
+# Get the number of available XPU devices
+xpu_device_count = torch.xpu.device_count()
+
+# Create a list of dictionaries containing properties for each XPU device
+dict_properties_list = [
+    get_public_properties(torch.xpu.get_device_properties(i))
+    for i in range(xpu_device_count)
+]
+
+# Convert the list of dictionaries to a pandas DataFrame for easy viewing
+pd.DataFrame(dict_properties_list).T
+
+# %%
 # set up some print options
 np.set_printoptions(precision = 2, suppress = True)
 torch.set_printoptions(precision=2)
 
 #begin logging
 log_dir = 'log' 
+fig_dir = 'figures_simple_demo' 
+os.makedirs(fig_dir, exist_ok=True)
 #exp_dir = 'simple_demonstration' 
 cur_dir = log_dir #os.path.join(log_dir, exp_dir)
 os.makedirs(cur_dir, exist_ok=True)
-#f = open(cur_dir + '/train.log', "a", 1)
-#sys.stdout = f
 
 # %%
 # Set up problem parameters
@@ -80,6 +121,7 @@ B = 4000  # 1000 minibatch size
 var = 0.0001  # initializations scale of transformer parameter
 shape_k = 0.1  # shape_k: parameter for Gamma distributed covariates
 max_iters = 10000  # Number of Iterations to run
+half_lr_each_nth_step = None
 hist_stride = 1  # stride for saved model paramters in `train.ipynb'
 stride = 100
 
@@ -96,6 +138,56 @@ def clip_and_step(allparam, optim, clip_r = None):
             grad_all.mul_(clip_r/norm_p)
     optim.step()
     return norm_p
+
+# %%
+# chose train mask / amount of examples
+######################################
+
+
+# ####
+# # if we want to loop all instead -- bad idea, takes too long
+# for option in possible_combinations:
+#     if not all(option):
+#         continue
+
+# chosen_combinations = possible_combinations[1:] # all ~ 1M
+# chosen_combinations = [p for p in possible_combinations if sum(p)==10] # all with context of 10 examples ~200k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=10] # all with context of at least 10 examples ~ 600k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=12] # all with context of at least 12 examples ~ 260k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=15] # all with context of at least 15 examples ~ 21k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=18] # all with context of at least 18 examples = 211 --> ~ ...min
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=19] # all with context of at least 19 examples = 21 --> ~ ...min
+
+# ####
+# # choose random example from context
+# # start from index 1 to avoid all zero mask
+# selection = np.random.randint(1,len(possible_combinations),1)[0]
+# option = possible_combinations[selection]
+# chosen_combinations = [option] # to keep the rest the same
+# print(option,'len ', sum(option))
+
+# train_mask_specs = '_1_opt_1outof'+str(N)
+
+# ####
+# # choose random subset from context
+# subset_size         = 3
+# amount_of_examples  = 10
+# all_with_amount_of_examples = [p for p in possible_combinations if sum(p)==amount_of_examples]
+# # option = all_with_amount_of_examples[np.random.randint(1,len(selection),size=1)[0]]
+# selection = np.random.randint(1,len(all_with_amount_of_examples),size=subset_size)
+# chosen_combinations = [all_with_amount_of_examples[index] for index in selection] 
+
+# train_mask_specs = '_' + str(subset_size)+'opt_'+str(amount_of_examples)+'outof'+str(N)
+
+####
+# train full
+option = torch.ones((N,))
+chosen_combinations = [option] # to keep the rest the same
+
+train_mask_specs = '_trainfull_'+str(N)
+
+
+
 
 # %%
 # training
@@ -117,7 +209,7 @@ for key in keys:
     opt_seed = sd
     
     hist_dict[key] = []
-    train_loss_dict[key] = torch.zeros(max_iters//stride)
+    train_loss_dict[key] = torch.zeros(max_iters//stride, len(chosen_combinations))
     
     #set seed and initialize model
     torch.manual_seed(opt_seed)
@@ -129,6 +221,12 @@ for key in keys:
     elif alg == 'adam':
         optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=(0.9, 0.9), weight_decay=0)
     else: assert False
+
+    # Optimize the model and optimizer objects
+    # https://christianjmills.com/posts/intel-pytorch-extension-tutorial/native-ubuntu/
+    if device == 'xpu':
+        model, optimizer = ipex.optimize(model, optimizer=optimizer, dtype=torch.bfloat16)
+
     
     #set seed and initialize initial training batch
     np.random.seed(prob_seed)
@@ -139,34 +237,21 @@ for key in keys:
     for t in range(max_iters):
         start = time.time()
         # save model parameters
-        if t%hist_stride ==0:
+        if t%hist_stride == 0:
             hist_dict[key].append(model.allparam.clone().detach())
         #  generate a new batch of training set
         Z, y, Z_train = generate_data(mode,N,d,B,shape_k)
+        Z[:,-1,-1]      = y # need to write y back in to keep the rest of the treatment the same
 
         # Z = Z.to(device) # type: ignore
         # y = y.to(device)
 
-        # # if we want to loop all instead
-        # for option in possible_combinations:
-        #     if not all(option):
-        #         continue
-
-        # chosing a random mask
-        for _ in range(1): # to have same indentation, when not looping all but choosing random option
-            # # choose random subset from context
-            # # start from index 1 to avoid all zero mask
-            # # print(len(possible_combinations))
-            # selection = np.random.randint(1,len(possible_combinations),1)[0]
-            # # print(selection)
-            # option = possible_combinations[selection]
-            # # print(option,'len ', sum(option))
-
-            # train full
-            option = torch.ones((N,))
+        loss_list = torch.zeros((len(chosen_combinations),))
+        for opt_idx, option in enumerate(chosen_combinations):
+        # for _ in range(1): # to have same indentation, when not looping all but choosing random option    
             
             ##################
-            # for both options
+            # for all options
 
             mask = torch.tensor( option, dtype=bool )
             curr_context    = Z_train[:,mask,:]
@@ -182,52 +267,109 @@ for key in keys:
             output = model(curr_context) # full length with 0 padding after first sum(mask) (= amount of non-zeros in mask)
             predicitons = output[:,:sum(mask),:]
             loss = in_context_loss2(predicitons, curr_y)
+            loss_list[opt_idx] = loss.item()
             
-            # save training loss
-            if t%stride == 0:
-                train_loss_dict[key][t//stride] = loss
+            # # save training loss
+            # if t%stride == 0:
+            #     train_loss_dict[key][t//stride] = loss
                 
             # compute gradient, take step
             loss.backward()
             norms = clip_and_step(model.allparam, optimizer, clip_r=clip_r)
             optimizer.zero_grad()
-            end=time.time()
-            if t%100 ==0 or t<5:
-                print('iter {} | Loss: {}  time: {}s  gradnorm: {}'.format(t,loss.item(), end-start, norms))
+        end=time.time()
+        if t%100 ==0 or t<5:
+            print('iter {} | Loss: {}  time: {}s  gradnorm: {}'.format(t,loss.item(), end-start, norms))
+
+        # save training loss
+        if t%stride == 0:
+            non_zero_loss_mask = torch.tensor(loss_list, dtype=bool)
+            train_loss_dict[key][t//stride] = loss_list[non_zero_loss_mask]#.mean()
+
     #save to 
     end_training = time.time()
     print("end training for key ", key, " time ", end_training-start_training, "s")
 end_full_training = time.time()
-print("end full training: time ", end_full_training-start_full_training, "s")
+train_time = end_full_training-start_full_training
+print("end full training: time ", train_time, "s")
 torch.save({'hist_dict':hist_dict}, filename)
 
 # %%
 # plot the train loss with error bars
 ####################################
 
-fig_dir = 'figures' 
-os.makedirs(fig_dir, exist_ok=True)
 
 fig, ax = plt.subplots(1, 1,figsize = (7, 6))
 
-train_losses = torch.zeros(len(seeds), max_iters//stride)
+train_losses = torch.zeros(len(seeds), max_iters//stride, len(chosen_combinations))
 keys = train_loss_dict.keys()
 for idx, key in enumerate(keys):
-    train_losses[idx,:] = train_loss_dict[key]
-train_losses_mean = torch.mean(train_losses, axis=0).detach().numpy()
-train_losses_std = torch.std(train_losses, axis=0).detach().numpy()
+    train_losses[idx,:,:] = train_loss_dict[key]
+train_losses_mean = torch.mean(train_losses, axis=(0,-1)).detach().numpy()
+train_losses_std = torch.std(train_losses, axis=(0,-1)).detach().numpy()
 ax.plot(range(0,max_iters,stride), train_losses_mean, color = 'red', lw = 3)#, label='Adam')
 ax.fill_between(range(0,max_iters,stride), train_losses_mean-train_losses_std, train_losses_mean+train_losses_std, color = 'red', alpha = 0.2)
-ax.set_xlabel('Iteration',fontsize=40)
-ax.set_ylabel('ICL Train Loss',fontsize=40)
+ax.set_xlabel('Iteration',fontsize=30)
+ax.set_ylabel('Train Loss',fontsize=30)
+# ax.set_ylabel('log(Train Loss)',fontsize=30)
 ax.tick_params(axis='both', which='major', labelsize=30, width = 3, length = 10)
 ax.tick_params(axis='both', which='minor', labelsize=20, width = 3, length = 5)
 #ax.legend(fontsize=30)
-ax.set_yscale('log')
+# ax.set_yscale('log')
 
 
 plt.tight_layout()
-plt.savefig(fig_dir + '/simple_demonstration_train_loss_plot.pdf', dpi=600)
+output_file_name = fig_dir + '/simple_demonstration_train_loss_plot' + train_mask_specs
+plt.savefig(output_file_name + '.pdf', dpi=600)
+
+tikzplotlib.save(output_file_name + '.tex')
+
+# %%
+# chose test mask / amount of examples
+######################################
+
+
+# ####
+# # if we want to loop all instead -- bad idea, takes too long
+# for option in possible_combinations:
+#     if not all(option):
+#         continue
+
+# chosen_combinations = possible_combinations[1:] # all except zero context ~ 1M
+# chosen_combinations = [p for p in possible_combinations if sum(p)==10] # all with context of 10 examples ~200k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=10] # all with context of at least 10 examples ~ 600k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=12] # all with context of at least 12 examples ~ 260k
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=15] # all with context of at least 15 examples ~ 21k --> ~ 15h
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=18] # all with context of at least 18 examples = 211 --> ~ 10min
+# chosen_combinations = [p for p in possible_combinations if sum(p)>=19] # all with context of at least 19 examples = 21 --> ~ 1min
+
+# ####
+# # choose random example from context
+# # start from index 1 to avoid all zero mask
+# selection = np.random.randint(1,len(possible_combinations),1)[0]
+# option = possible_combinations[selection]
+# chosen_combinations = [option] # to keep the rest the same
+# # print(option,'len ', sum(option))
+
+# test_mask_specs = '_1_opt_1outof'+str(N)
+
+# ####
+# # choose random subset from context
+# subset_size         = 5
+# amount_of_examples  = 10
+# all_with_amount_of_examples = [p for p in possible_combinations if sum(p)==amount_of_examples]
+# # option = all_with_amount_of_examples[np.random.randint(1,len(selection),size=1)[0]]
+# selection = np.random.randint(1,len(all_with_amount_of_examples),size=subset_size)
+# chosen_combinations = [all_with_amount_of_examples[index] for index in selection] 
+
+# test_mask_specs = '_'+str(subset_size)+'opt_'+str(amount_of_examples)+'outof'+str(N)
+
+####
+# test full
+option = torch.ones((N,))
+chosen_combinations = [option] # to keep the rest the same
+
+test_mask_specs = '_testfull_'+str(N)
 
 
 # %%
@@ -240,7 +382,7 @@ start_full_testing = time.time()
 for key in hist_dict:
     sd = key[0]
     
-    loss_dict[key] = torch.zeros(max_iters//stride)
+    loss_dict[key] = torch.zeros(max_iters//stride, len(chosen_combinations))
     
     np.random.seed(99)
     torch.manual_seed(99)
@@ -252,37 +394,12 @@ for key in hist_dict:
     model = Transformer_F(n_layer, n_head, d, var).to(device)
 
     for t in range(0,max_iters,stride):
-        
-        loss_list = torch.zeros((len(possible_combinations),))
 
-        # if we want to loop all instead
-        # for option in possible_combinations:
-        #     if not all(option):
-        #         continue
-
-        # chosen_combinations = possible_combinations[1:] # all ~ 1M
-        # chosen_combinations = [p for p in possible_combinations if sum(p)==10] # all with context of 10 examples ~200k
-        # chosen_combinations = [p for p in possible_combinations if sum(p)>=10] # all with context of at least 10 examples ~ 600k
-        # chosen_combinations = [p for p in possible_combinations if sum(p)>=12] # all with context of at least 12 examples ~ 260k
-        # chosen_combinations = [p for p in possible_combinations if sum(p)>=15] # all with context of at least 15 examples ~ 21k
-        chosen_combinations = [p for p in possible_combinations if sum(p)>=18] # all with context of at least 18 examples =211
-
+        loss_list = torch.zeros((len(chosen_combinations),))
         for opt_idx, option in enumerate(chosen_combinations):
 
-        # for _ in range(1): # to have same indentation, when not looping all but choosing random option
-
-            # # choose random subset from context
-            # # start from index 1 to avoid all zero mask
-            # # print(len(possible_combinations))
-            # selection = np.random.randint(1,len(possible_combinations),1)[0]
-            # # print(selection)
-            # option = possible_combinations[selection]
-            # # print(option,'len ', sum(option))
-
-            # # test full
-            # option = torch.ones((N,))
-            
-            # for both options
+        # for _ in range(1): # to have same indentation, when not looping all but choosing random option    
+            # for all options
             mask = torch.tensor( option, dtype=bool )
             curr_context    = Z[:,mask,:] # need to leave one out for last test one
             # curr_y          = Z[:,mask,-1]#.detach().clone()
@@ -294,40 +411,43 @@ for key in hist_dict:
                 model.allparam.copy_(hist_dict[key][t])
 
             output = model(curr_context) # full length with 0 padding after first sum(mask) (= amount of non-zeros in mask)
-            predicitons = output[:,:sum(mask),:]            
+            predicitons = output[:,:sum(mask),:]
             loss_list[opt_idx] = in_context_loss2(predicitons, curr_y).item()
         non_zero_loss_mask = torch.tensor(loss_list, dtype=bool)
-        loss_dict[key][t//stride] = loss_list[non_zero_loss_mask].mean()
+        loss_dict[key][t//stride] = loss_list[non_zero_loss_mask]#.mean()
 
 end_full_testing = time.time()
-print("end full testing: time ", end_full_testing-start_full_testing, "s")
+test_time = end_full_testing-start_full_testing
+print("end full testing: time ", test_time, "s")
 # %%
 # plot the test loss with error bars
 ####################################
 
-fig_dir = 'figures' 
-os.makedirs(fig_dir, exist_ok=True)
-
 fig, ax = plt.subplots(1, 1,figsize = (7, 6))
 
-losses = torch.zeros(len(seeds), max_iters//stride)
+losses = torch.zeros(len(seeds), max_iters//stride, len(chosen_combinations))
 keys = loss_dict.keys()
 for idx, key in enumerate(keys):
-    losses[idx,:] = loss_dict[key]
-losses_mean = torch.mean(losses, axis=0)
-losses_std = torch.std(losses, axis=0)
+    losses[idx,:,:] = loss_dict[key]
+losses_mean = torch.mean(losses, axis=(0,-1)) # over seed and different combinations of context examples
+losses_std = torch.std(losses, axis=(0,-1))
 ax.plot(range(0,max_iters,stride), losses_mean, color = 'red', lw = 3)#, label='Adam')
 ax.fill_between(range(0,max_iters,stride), losses_mean-losses_std, losses_mean+losses_std, color = 'red', alpha = 0.2)
-ax.set_xlabel('Iteration',fontsize=40)
-ax.set_ylabel('ICL Test Loss',fontsize=40)
+ax.set_xlabel('Iteration',fontsize=30)
+ax.set_ylabel('Test Loss',fontsize=30)
+# ax.set_ylabel('log(Test Loss)',fontsize=30)
 ax.tick_params(axis='both', which='major', labelsize=30, width = 3, length = 10)
 ax.tick_params(axis='both', which='minor', labelsize=20, width = 3, length = 5)
 #ax.legend(fontsize=30)
-ax.set_yscale('log')
+# ax.set_yscale('log')
 
 
 plt.tight_layout()
-plt.savefig(fig_dir + '/simple_demonstration_loss_plot.pdf', dpi=600)
+
+output_file_name = fig_dir + '/simple_demonstration_loss_plot' + test_mask_specs
+plt.savefig(output_file_name + '.pdf', dpi=600)
+
+tikzplotlib.save(output_file_name + '.tex')
 
 # %%
 ####################################
@@ -339,7 +459,7 @@ key = (0,)
 for l in range(n_layer-1):
     for h in range(n_head):
         fig, ax = plt.subplots(1, 1,figsize = (6, 6))
-        matrix = hist_dict[key][9999][l,h,0,:,:]
+        matrix = hist_dict[key][-1][l,h,0,:,:]
         # Create a heatmap using imshow
         im = ax.imshow(matrix.cpu(), cmap='gray_r')
         # Add the matrix values as text
@@ -350,11 +470,15 @@ for l in range(n_layer-1):
         fig.colorbar(im)
         ax.set_title('$B_{}$'.format(l),fontsize=20)
         
-        plt.savefig(fig_dir + '/simple_demonstration_B{}.pdf'.format(l), dpi=600)
+        output_file_name = fig_dir + '/simple_demonstration_B{}'.format(l) + test_mask_specs
+        plt.savefig(output_file_name + '.pdf', dpi=600)
+
+        tikzplotlib.save(output_file_name + '.tex')
+
 for l in range(n_layer):
     for h in range(n_head):
         fig, ax = plt.subplots(1, 1,figsize = (6, 6))
-        matrix = hist_dict[key][9999][l,h,1,:,:]
+        matrix = hist_dict[key][-1][l,h,1,:,:]
         # Create a heatmap using imshow
         im = ax.imshow(matrix.cpu(), cmap='gray_r')
         # Add the matrix values as text
@@ -364,7 +488,11 @@ for l in range(n_layer):
         # Add a colorbar for reference
         fig.colorbar(im)
         ax.set_title('$A_{}$'.format(l),fontsize=20)
-        plt.savefig(fig_dir + '/simple_demonstration_A{}.pdf'.format(l), dpi=600)
+
+        output_file_name = fig_dir + '/simple_demonstration_A{}'.format(l) + test_mask_specs
+        plt.savefig(output_file_name + '.pdf', dpi=600)
+
+        tikzplotlib.save(output_file_name + '.tex')
     
 
 # %%
@@ -399,16 +527,16 @@ for key in hist_dict:
 # plot distances
 ####################################
 
-fig_dir = 'figures' 
-os.makedirs(fig_dir, exist_ok=True)
-
 fig, axs = plt.subplots(3, 2,figsize = (14, 18))
 
-labels = ['B0', 'B1', None, 'A0', 'A1', 'A2']
-colors = ['red','orange',None, 'green','blue','black']
+labels = ['B0', 'B1', None, 'A0', 'A1', 'A2','A3']
+colors = ['red','orange',None, 'green','blue','black','purple']
 
-labels = ['B0', 'B1', None, 'A0', 'A1', 'A2']
-colors = ['red','orange',None, 'green','blue','black']
+# labels = ['B0', 'B1', None, 'A0', 'A1', 'A2']
+# colors = ['red','orange',None, 'green','blue','black']
+
+
+distances: torch.Tensor = torch.zeros(len(seeds), max_iters//stride)
 
 #make P plots
 for l in range(n_layer):
@@ -418,9 +546,9 @@ for l in range(n_layer):
         ax = axs[l,pq]
         dist_p = torch.zeros(len(seeds), max_iters//stride)
         for idx, sd in enumerate(seeds):
-            losses[idx,:] = dist_dict[(sd,)][l,pq,:]
-        dist_mean = torch.mean(losses, axis=0)
-        dist_std = torch.std(losses, axis=0)
+            distances[idx,:] = dist_dict[(sd,)][l,pq,:]
+        dist_mean = torch.mean(distances, axis=(0))
+        dist_std = torch.std(distances, axis=(0))
         
         style_id = l + 3*pq
         
@@ -432,14 +560,57 @@ for l in range(n_layer):
         ax.legend(fontsize=30)
         ax.set_yscale('log')
 
-plt.savefig(fig_dir + '/simple_demonstration_dist_to_id.pdf', dpi=600)
+output_file_name = fig_dir + '/simple_demonstration_dist_to_id'
+plt.savefig(output_file_name + '.pdf', dpi=600)
+
+tikzplotlib.save(output_file_name + '.tex')
+    
 
 
 # %%
 print((hist_dict[(0,)][100]- hist_dict[(1,)][100]).norm())
 print((compute_dist_identity(hist_dict[(0,)][100][i,0,j,:,:]) - compute_dist_identity(hist_dict[(1,)][100][i,0,j,:,:])))
-print((dist_dict[(0,)][0,0,10]- dist_dict[(1,)][0,0,10]).norm())
+print((dist_dict[(0,)][0,0,-1]- dist_dict[(1,)][0,0,-1]).norm())
 
 
 # %%
 
+# Sources
+# https://stackoverflow.com/questions/18425225/getting-the-name-of-a-variable-as-a-string
+# https://stackoverflow.com/questions/73975135/list-comprehension-using-f-strings
+# https://stackoverflow.com/questions/68518600/add-a-title-to-a-dataframe
+# https://stackoverflow.com/questions/4152963/get-name-of-current-script-in-python
+# https://stackoverflow.com/questions/14380371/export-a-latex-table-from-pandas-dataframe
+# import inspect
+
+# def retrieve_var(var):
+#     callers_local_vars = inspect.currentframe().f_back.f_locals.items()
+#     return [var_name for var_name, var_val in callers_local_vars if var_val is var]
+
+# todf = []
+# for i in [lr, mode, alg, clip_r, N, d, n_layer, n_head]:
+#     todf.append(
+#         (retrieve_var(i)[0], i)
+#     )
+
+variables_list = [
+    (i, globals()[i]) if i in globals().keys()
+    else (i, 'n/a')
+    for i in [
+        'N', 'd', 'n_layer', 'n_head',
+        'lr', 'half_lr_each_nth_step',
+        'mode', 'alg', 'clip_r', 
+        'B', 'var', 'shape_k', 'max_iters', 
+        'subset_size', 'amount_of_examples',
+        'hist_stride', 'stride', 
+        'train_mask_specs', 'test_mask_specs',
+        'train_time', 'test_time'
+        ]
+    ]
+
+variables_df = pd.DataFrame(variables_list, columns=['variable name', 'value'])
+variables_df.columns=pd.MultiIndex.from_product([[os.path.basename(__file__)],variables_df.columns])
+
+variables_df.to_latex(fig_dir + '/' + fig_dir.removeprefix('figures_') + '_vars.tex', index=False)
+variables_df
+# %%
