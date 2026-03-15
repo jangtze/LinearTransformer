@@ -319,11 +319,10 @@ ax.plot(range(0,max_iters,stride), train_losses_mean, color = 'red', lw = 3)#, l
 ax.fill_between(range(0,max_iters,stride), train_losses_mean-train_losses_std, train_losses_mean+train_losses_std, color = 'red', alpha = 0.2)
 ax.set_xlabel('Iteration',fontsize=30)
 ax.set_ylabel('Train Loss',fontsize=30)
-# ax.set_ylabel('log(Train Loss)',fontsize=30)
 ax.tick_params(axis='both', which='major', labelsize=30, width = 3, length = 10)
 ax.tick_params(axis='both', which='minor', labelsize=20, width = 3, length = 5)
 #ax.legend(fontsize=30)
-# ax.set_yscale('log')
+ax.set_yscale('log')
 
 
 plt.tight_layout()
@@ -448,11 +447,10 @@ ax.plot(range(0,max_iters,stride), losses_mean, color = 'red', lw = 3)#, label='
 ax.fill_between(range(0,max_iters,stride), losses_mean-losses_std, losses_mean+losses_std, color = 'red', alpha = 0.2)
 ax.set_xlabel('Iteration',fontsize=30)
 ax.set_ylabel('Test Loss',fontsize=30)
-# ax.set_ylabel('log(Test Loss)',fontsize=30)
 ax.tick_params(axis='both', which='major', labelsize=30, width = 3, length = 10)
 ax.tick_params(axis='both', which='minor', labelsize=20, width = 3, length = 5)
 #ax.legend(fontsize=30)
-# ax.set_yscale('log')
+ax.set_yscale('log')
 
 
 plt.tight_layout()

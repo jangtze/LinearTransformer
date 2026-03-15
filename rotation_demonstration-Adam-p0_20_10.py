@@ -28,16 +28,8 @@ import torch
 
 import pandas as pd
 #####################################################
-# This is almost identical to simple demonstration 
-# -- except covariates have a skewed covariance matrix
-#
-# In this notebook, we train a 3-layer linear transformer with
-# - context-length 20
-# - covariate dimension 5, standard Gaussian distribution
-# We plot
-# - test loss against number of iterations
-# - imshow of each parameter matrix at end of training
-# - distance-to-identity of each parameter matrix
+# Same as rotation demonstration-Adam.ipynb, except
+# we additionally enforce that P=0 for each layer
 #####################################################
 
 # use intel arc ipex
@@ -56,7 +48,7 @@ torch.set_printoptions(precision=2)
 
 #begin logging
 log_dir = 'log' 
-fig_dir = 'figures_adam_20_20' 
+fig_dir = 'figures_adam_p0_20_10' 
 os.makedirs(fig_dir, exist_ok=True)
 cur_dir = log_dir #os.path.join(log_dir, exp_dir)
 os.makedirs(cur_dir, exist_ok=True)
@@ -155,7 +147,7 @@ train_mask_specs = '_trainfull_'+str(N)
 
 # %%
 # training
-filename_format = '/rotation_hist_adam_{}_{}_{}.pth'
+filename_format = '/rotation_hist_adam_pnull_{}_{}_{}.pth'
 filename = filename_format.format(n_layer, N, d)
 filename = (cur_dir + filename)
 hist_dict = {}
@@ -163,7 +155,7 @@ train_loss_dict = {}
 U_dict = {}
 D_dict = {}
 
-seeds = [0,1,2] #for demonstration purpose, just use 3 seeds
+seeds = [0,1,2,3,4]
 keys = [(s,) for s in seeds]
 print("start whole training ...")
 start_full_training = time.time()
@@ -212,13 +204,7 @@ for key in keys:
         if t%half_lr_each_nth_step==0 and t>1:# and t < 200001:
             optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] *0.5
         # if t%100==0:
-        #     Z,y = generate_data_inplace(Z, shape_k=0.1, U=U, D=D)
-        #if t==6000:
-        #    optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] *0.2
-        #if t==12000:
-        #    optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] *0.2
-        #if t==16000:
-        #    optimizer.param_groups[0]['lr'] = optimizer.param_groups[0]['lr'] *0.2
+        #     Z,y = generate_data_inplace(Z, U=U, D=D)
         start = time.time()
         # save model parameters
         if t%hist_stride == 0:
@@ -262,6 +248,8 @@ for key in keys:
             norms = clip_and_step(model.allparam, optimizer, clip_r=clip_r)
             optimizer.zero_grad()
         
+            #IMPORTANT: zero out the p matrices after each update! This enforces the P=0 constraint.
+            model.zero_p()
 
         end=time.time()
         if t%100 ==0 or t<5:
@@ -309,7 +297,7 @@ ax.set_yscale('log')
 
 
 plt.tight_layout()
-output_file_name = fig_dir + '/rotation_demonstration_adam_train_loss_plot' + train_mask_specs
+output_file_name = fig_dir + '/rotation_demonstration_adam_pnull_train_loss_plot' + train_mask_specs
 plt.savefig(output_file_name + '.pdf', dpi=600)
 
 tikzplotlib.save(output_file_name + '.tex')
@@ -343,23 +331,23 @@ tikzplotlib.save(output_file_name + '.tex')
 
 # test_mask_specs = '_1_opt_1outof'+str(N)
 
-# ####
-# # choose random subset from context
-# subset_size         = 5
-# amount_of_examples  = 10
-# all_with_amount_of_examples = [p for p in possible_combinations if sum(p)==amount_of_examples]
-# # option = all_with_amount_of_examples[np.random.randint(1,len(selection),size=1)[0]]
-# selection = np.random.randint(1,len(all_with_amount_of_examples),size=subset_size)
-# chosen_combinations = [all_with_amount_of_examples[index] for index in selection] 
-
-# test_mask_specs = '_'+str(subset_size)+'opt_'+str(amount_of_examples)+'outof'+str(N)
-
 ####
-# test full
-option = torch.ones((N,))
-chosen_combinations = [option] # to keep the rest the same
+# choose random subset from context
+subset_size         = 5
+amount_of_examples  = 10
+all_with_amount_of_examples = [p for p in possible_combinations if sum(p)==amount_of_examples]
+# option = all_with_amount_of_examples[np.random.randint(1,len(selection),size=1)[0]]
+selection = np.random.randint(1,len(all_with_amount_of_examples),size=subset_size)
+chosen_combinations = [all_with_amount_of_examples[index] for index in selection] 
 
-test_mask_specs = '_testfull_'+str(N)
+test_mask_specs = '_'+str(subset_size)+'opt_'+str(amount_of_examples)+'outof'+str(N)
+
+# ####
+# # test full
+# option = torch.ones((N,))
+# chosen_combinations = [option] # to keep the rest the same
+
+# test_mask_specs = '_testfull_'+str(N)
 
 
 # %%
@@ -441,7 +429,7 @@ ax.set_yscale('log')
 
 
 plt.tight_layout()
-output_file_name = fig_dir + '/rotation_demonstration_adam_loss_plot' + test_mask_specs
+output_file_name = fig_dir + '/rotation_demonstration_adam_pnull_loss_plot' + test_mask_specs
 plt.savefig(output_file_name + '.pdf', dpi=600)
 
 tikzplotlib.save(output_file_name + '.tex')
@@ -472,7 +460,7 @@ for l in range(n_layer-1):
         fig.colorbar(im)
         ax.set_title('$B_{}$'.format(l),fontsize=20)
         
-        output_file_name = fig_dir + '/rotation_demonstration_B{}'.format(l) + test_mask_specs
+        output_file_name = fig_dir + '/rotation_demonstration_pnull_B{}'.format(l) + test_mask_specs
         plt.savefig(output_file_name + '.pdf', dpi=600)
 
         tikzplotlib.save(output_file_name + '.tex')
@@ -493,7 +481,7 @@ for l in range(n_layer):
         fig.colorbar(im)
         ax.set_title('$A_{}$'.format(l),fontsize=20)
 
-        output_file_name = fig_dir + '/rotation_demonstration_A{}'.format(l) + test_mask_specs
+        output_file_name = fig_dir + '/rotation_demonstration_pnull_A{}'.format(l) + test_mask_specs
         plt.savefig(output_file_name + '.pdf', dpi=600)
 
         tikzplotlib.save(output_file_name + '.tex')
@@ -548,7 +536,7 @@ names = ['B0', 'B1', None,
           'A0', 
           'A1', 
           'A2']
-colors = ['red','orange',None, 'green','blue','black']
+colors = ['blue','blue',None, 'blue','blue','blue']
 
 distances: torch.Tensor = torch.zeros(len(seeds), max_iters//stride)
 
@@ -588,7 +576,7 @@ for l in range(n_layer):
         ax.legend(fontsize=30)
         # ax.set_yscale('log')
         
-        output_file_name = fig_dir + '/rotation_demonstration_dist_to_id_adam_{}'.format(l) + test_mask_specs
+        output_file_name = fig_dir + '/rotation_demonstration_dist_to_id_adam_pnull_{}'.format(l) + test_mask_specs
         plt.savefig(output_file_name + '.pdf', dpi=600)
 
         tikzplotlib.save(output_file_name + '.tex')

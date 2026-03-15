@@ -1,4 +1,5 @@
-"*.pdf"
-"*.pth"
-"*.png"
+*.pdf
+*.pth
+*.png
 *.tex
+
