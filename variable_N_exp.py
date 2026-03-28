@@ -7,6 +7,18 @@ import os
 import numpy as np
 import math
 
+# %%
+! for file in \
+'linear_transformer.py'\
+; do\
+    echo "downloading ${file} ... ";\
+  curl \
+  -o "${file}"\
+  -L "https://raw.githubusercontent.com/jangtze/LinearTransformer/refs/heads/main/${file}";\
+done
+
+# %%
+
 #####################################################
 # This is almost identical to simple demonstration 
 # -- except covariates have a skewed covariance matrix
@@ -52,7 +64,7 @@ n_head = 1  # 1-headed attention
 B = 40000  # 1000 minibatch size
 var = 0.0001  # initializations scale of transformer parameter
 shape_k = 0.1  # shape_k: parameter for Gamma distributed covariates
-max_iters = 8000  # Number of Iterations to run
+max_iters = 1000  # Number of Iterations to run
 hist_stride = 1  # stride for saved model paramters in `train.ipynb'
 stride = 100
 
@@ -71,8 +83,9 @@ def clip_and_step(allparam, optimizer, clip_r = None):
     return norm_p
 
 filename_format = '/variable_N_hist_{}_{}_{}.pth'
-Ns = range(20,21,2)     # context length
-seeds=[0,1,2,3,4]
+# Ns = range(20,21,2)     # context length
+Ns = [10,20]
+seeds=[0]#,1]#,2,3,4]
 keys = []
 for s in seeds:
     for N in Ns:
@@ -475,3 +488,5 @@ plt.tight_layout()
 plt.savefig(fig_dir + '/3-step-variable-N-plot.pdf', dpi=600)
 
 
+
+# %%

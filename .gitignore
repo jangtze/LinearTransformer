@@ -2,4 +2,6 @@
 *.pth
 *.png
 *.tex
+*.DS_Store
+*.pyc
 

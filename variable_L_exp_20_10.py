@@ -49,7 +49,7 @@ torch.set_printoptions(precision=2)
 
 #begin logging
 log_dir = 'log' 
-fig_dir = 'figures_gd_l_20_20' 
+fig_dir = 'figures_gd_l_20_10' 
 os.makedirs(fig_dir, exist_ok=True)
 cur_dir = log_dir #os.path.join(log_dir, exp_dir)
 os.makedirs(cur_dir, exist_ok=True)
@@ -151,7 +151,7 @@ train_mask_specs = '_trainfull_'+str(N)
 
 # %%
 #format for saving run data
-filename_format = '/variable_L_hist2020_{}_{}_{}.pth'
+filename_format = '/variable_L_hist2010_{}_{}_{}.pth'
 # filename = (cur_dir + filename)
 hist_dict = {}
 train_loss_dict = {}
@@ -352,23 +352,23 @@ tikzplotlib.save(output_file_name + '.tex')
 
 # test_mask_specs = '_1_opt_1outof'+str(N)
 
-# ####
-# # choose random subset from context
-# subset_size         = 3
-# amount_of_examples  = 10
-# all_with_amount_of_examples = [p for p in possible_combinations if sum(p)==amount_of_examples]
-# # option = all_with_amount_of_examples[np.random.randint(1,len(selection),size=1)[0]]
-# selection = np.random.randint(1,len(all_with_amount_of_examples),size=subset_size)
-# chosen_combinations = [all_with_amount_of_examples[index] for index in selection] 
-
-# test_mask_specs = '_'+str(subset_size)+'opt_'+str(amount_of_examples)+'outof'+str(N)
-
 ####
-# test full
-option = torch.ones((N,))
-chosen_combinations = [option] # to keep the rest the same
+# choose random subset from context
+subset_size         = 3
+amount_of_examples  = 10
+all_with_amount_of_examples = [p for p in possible_combinations if sum(p)==amount_of_examples]
+# option = all_with_amount_of_examples[np.random.randint(1,len(selection),size=1)[0]]
+selection = np.random.randint(1,len(all_with_amount_of_examples),size=subset_size)
+chosen_combinations = [all_with_amount_of_examples[index] for index in selection] 
 
-test_mask_specs = '_testfull_'+str(N)
+test_mask_specs = '_'+str(subset_size)+'opt_'+str(amount_of_examples)+'outof'+str(N)
+
+# ####
+# # test full
+# option = torch.ones((N,))
+# chosen_combinations = [option] # to keep the rest the same
+
+# test_mask_specs = '_testfull_'+str(N)
 
 
 # %%

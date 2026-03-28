@@ -125,8 +125,10 @@ def in_context_loss(model, Z, y, N_len=None, d_len=None):
 # evaluate the loss of model, given data (Z,y)
 def in_context_loss2(output, y):
     # take last entry for loss or last non padded
-
-    diff = output[:,-1,-1]+y[:,-1]
+    if len(y.shape) == 1: # what it should be without mask (just one dim for batches)
+        diff = output[:,-1,-1]+y[:]
+    else: # with mask we get the whole masked y-vector but only use the last element
+        diff = output[:,-1,-1]+y[:,-1]
     loss = ((diff)**2).mean() 
     return loss
         
@@ -187,7 +189,7 @@ def generate_data(mode='normal',N=20,d=1,B=1000,shape_k=0.1, U : torch.Tensor = 
     y_comb  = torch.cat([y,y_zero],dim=1)
     Z       = torch.cat([X_comb,y_comb],dim=2)
     Z_train = torch.cat([X,y],dim=2)
-    return Z[:,1:,:].to(device),y_test.to(device), Z_train.to(device)
+    return Z[:,1:,:].to(device), y_test.to(device), Z_train.to(device)
 
 def generate_data_inplace(Z, U=None, D=None):
     
