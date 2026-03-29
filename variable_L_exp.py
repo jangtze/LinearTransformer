@@ -66,7 +66,8 @@ var = 0.0001  # initializations scale of transformer parameter
 shape_k = 0.1  # shape_k: parameter for Gamma distributed covariates
 
 # model
-n_layer = 4  # number of layers of transformer
+# n_layer = 4  # number of layers of transformer
+n_layers = [1,2,3,4,5,6]  # number of layers of transformer
 n_head = 1  # 1-headed attention
 N = 20     # context length
 d = 5        # dimension
@@ -151,12 +152,11 @@ train_mask_specs = '_trainfull_'+str(N)
 
 # %%
 #format for saving run data
-filename_format = '/variable_L_hist2020_{}_{}_{}.pth'
-# filename = (cur_dir + filename)
+filename_format = '/variable_L_hist2020_{}_{}_{}'
+# filename = (cur_dir + filename +'.pth')
 hist_dict = {}
 train_loss_dict = {}
 
-n_layers = [1,2,3,4]  # number of layers of transformer
 seeds=[0,1,2]#,3,4]
 keys = []
 for s in seeds:
@@ -203,8 +203,8 @@ for key in keys:
     np.random.seed(prob_seed)
     torch.manual_seed(prob_seed)
     gaus = torch.FloatTensor(5,5).uniform_(-1,1).to(device)
-    U = torch.linalg.svd (gaus)[0].to(device)
-    D = torch.diag(torch.FloatTensor([1,1,1/2,1/4,1])).to(device)
+    U = torch.linalg.svd (gaus)[0].to(device) # BUG these lines trigger fallback
+    D = torch.diag(torch.FloatTensor([1,1,1/2,1/4,1])).to(device) # BUG these lines trigger fallback
     Z, y, Z_train = generate_data(mode,N,d,B,shape_k, U, D)
     Z[:,-1,-1] = y # need to write y back in to keep the rest of the treatment the same
 
@@ -268,14 +268,14 @@ for key in keys:
             non_zero_loss_mask = torch.tensor(loss_list, dtype=bool)
             train_loss_dict[key][t//stride] = loss_list[non_zero_loss_mask]#.mean()
 
-    torch.save({'hist':hist, 'U':U, 'D':D}, filename)
+    torch.save({'hist':hist, 'U':U, 'D':D}, filename + '.pth')
     #save to 
     end_training = time.time()
     print("end training for key ", key, " time ", end_training-start_training, "s")
 end_full_training = time.time()
 train_time = end_full_training-start_full_training
 print("end full training: time ", train_time, "s")
-torch.save({'hist':hist, 'U':U, 'D':D}, filename+'_final')
+torch.save({'hist':hist, 'U':U, 'D':D}, filename + '_final' + '.pth')
 
 # %%
 # plot the train loss with error bars
@@ -301,7 +301,7 @@ for isx, sx in enumerate(seeds):
     for ilx, lx in enumerate(n_layers):
         curr_key = (sx,lx)
         train_losses[isx,ilx,:] = train_loss_dict[curr_key]
-train_losses_mean = torch.mean(train_losses, axis=(0,1,-1)).detach().numpy()
+train_losses_mean = torch.mean(train_losses, axis=(0,1,-1)).detach().numpy()  # over seed and different combinations of context examples
 train_losses_std = torch.std(train_losses, axis=(0,1,-1)).detach().numpy()
 
 train_loss_mean_final   = train_losses_mean[-1].item()
@@ -379,7 +379,7 @@ print("start whole testing ...")
 start_full_testing = time.time()
 for sd in seeds:
     key = (sd,)
-    loss_list = torch.zeros((len(chosen_combinations),len(n_layers)))
+    loss_list = torch.zeros((len(n_layers),len(chosen_combinations)))
     for opt_idx, option in enumerate(chosen_combinations):
 
     # for _ in range(1): # to have same indentation, when not looping all but choosing random option    
@@ -390,7 +390,7 @@ for sd in seeds:
             
             # loss_dict[key] = torch.zeros(4) # HACK where does that come from?
             # load parameters for given n_layer and seed
-            filename = cur_dir + filename_format.format(n_layer, N, sd)
+            filename = cur_dir + filename_format.format(n_layer, N, sd) + '.pth'
             hist = torch.load(filename)['hist']
             U = torch.load(filename)['U']
             D = torch.load(filename)['D']
@@ -422,9 +422,17 @@ for sd in seeds:
                 output = model(curr_context) # full length with 0 padding after first sum(mask) (= amount of non-zeros in mask)
                 predicitons = output[:,:sum(mask),:]
                 newloss = in_context_loss2(predicitons, curr_y).item()
+
                 if (newloss < best_loss):
                     best_loss= newloss
                     bestmodel = hist[t]
+
+                
+                end=time.time()
+                if t%5==0:
+                    print('iter {} | Loss: {} Best: {} time: {}s '.format(t, newloss, best_loss, end-start_full_testing))
+
+                loss_list[layr_idx,opt_idx] = best_loss
 
             # HACK why reeval when we can save best loss ?
             # with torch.no_grad():
@@ -449,15 +457,16 @@ for sd in seeds:
             # # loss_dict[key][n_layer-1] = in_context_loss2(Z, y).log().item()
             # # loss_dict[key][layr_idx] = nloss
 
-            loss_list[opt_idx,layr_idx] = best_loss
 
-    non_zero_loss_mask = torch.tensor(loss_list, dtype=bool)
-    if len(loss_list[non_zero_loss_mask].shape) == 1:
-        loss_list[non_zero_loss_mask]
-        loss_list = loss_list[:,torch.newaxis]
-        # loss_list = torch.expand_dims(loss_list, axis=-1) # only in numpy
-    else:
-        loss_dict[key] = loss_list[non_zero_loss_mask]#.mean()
+    # if len(loss_list.shape) == 2: # we might have opt, lyr
+    #     loss_list = loss_list[...,torch.newaxis]
+    #     # loss_list = torch.expand_dims(loss_list, axis=-1) # only in numpy
+
+    # non_zero_loss_mask = torch.tensor(loss_list, dtype=bool)
+
+    non_zero_loss_mask = torch.zeros(loss_list.shape)
+    non_zero_loss_mask = loss_list.detach().clone().to(dtype=bool)
+    loss_dict[key] = loss_list[non_zero_loss_mask].reshape(loss_list.shape[0],-1) # HACK this is not solid
 
 end_full_testing = time.time()
 test_time = end_full_testing-start_full_testing
@@ -518,13 +527,13 @@ def eval_w_instance(Z, Ytest, w):
 
 
 # %%
-gd_loss_matrix = torch.zeros(len(seeds),4)
+gd_loss_matrix = torch.zeros(len(seeds),len(n_layers))
 gd_sample_size = min(B,5000)
 # gd_sample_size = min(B,1000)
 
 print("start whole gd ...")
 start_full_gd = time.time()
-for n_layer in n_layers:
+for layr_idx, n_layer in enumerate(n_layers):
     #first find best eta
     #load seed 1 for U,D matrices
     sd = 1
@@ -532,7 +541,7 @@ for n_layer in n_layers:
     best_eta = 0
     numstep = n_layer
     # load UD matrices
-    filename = cur_dir + filename_format.format(n_layer, N, sd)
+    filename = cur_dir + filename_format.format(n_layer, N, sd)+'.pth'
     U = torch.load(filename)['U']
     D = torch.load(filename)['D']
     #generate test data using seed 999
@@ -565,7 +574,7 @@ for n_layer in n_layers:
     for sd in seeds:
         opt_seed = sd
         
-        filename = cur_dir + filename_format.format(n_layer, N, sd)
+        filename = cur_dir + filename_format.format(n_layer, N, sd) + '.pth'
         U = torch.load(filename)['U']
         D = torch.load(filename)['D']
         #generate test data
@@ -585,7 +594,7 @@ for n_layer in n_layers:
             gd_loss, gd_pred = eval_w_instance(Zi, Ytesti, w)
             total_loss = total_loss + gd_loss
         mean_loss = total_loss / Z.shape[0]
-        gd_loss_matrix[sd,n_layer-1] = mean_loss
+        gd_loss_matrix[sd,layr_idx] = mean_loss
         
 end_full_gd = time.time()
 gd_time = end_full_gd-start_full_gd
@@ -625,11 +634,11 @@ def eval_w_instance_precon(Z, Ytest, w, U, D):
 
 
 
-pgd_loss_matrix = torch.zeros(len(seeds),4)
+pgd_loss_matrix = torch.zeros(len(seeds),len(n_layers))
 
 print("start whole pgd ...")
 start_full_pgd = time.time()
-for n_layer in n_layers:
+for layr_idx, n_layer in enumerate(n_layers):
     #first find best eta
     #load seed 1 for U,D matrices
     sd = 1
@@ -637,7 +646,7 @@ for n_layer in n_layers:
     best_eta = 0
     numstep = n_layer
     # load UD matrices
-    filename = cur_dir + filename_format.format(n_layer, N, sd)
+    filename = cur_dir + filename_format.format(n_layer, N, sd)+'.pth'
     U = torch.load(filename)['U'].to(device)
     D = torch.load(filename)['D'].to(device)
     #generate test data using seed 999
@@ -669,7 +678,7 @@ for n_layer in n_layers:
     for sd in seeds:
         opt_seed = sd
         
-        filename = cur_dir + filename_format.format(n_layer, N, sd)
+        filename = cur_dir + filename_format.format(n_layer, N, sd)+'.pth'
         U = torch.load(filename)['U'].to(device)
         D = torch.load(filename)['D'].to(device)
         #generate test data
@@ -688,7 +697,7 @@ for n_layer in n_layers:
             pgd_loss, pgd_pred = eval_w_instance_precon(Zi, Ytesti, w, U, D)
             total_loss = total_loss + pgd_loss
         mean_loss = total_loss / gd_sample_size
-        pgd_loss_matrix[sd,n_layer-1] = mean_loss
+        pgd_loss_matrix[sd,layr_idx] = mean_loss
 
 end_full_pgd = time.time()
 pgd_time = end_full_pgd-start_full_pgd
@@ -713,12 +722,13 @@ pgd_loss_min          = min(pgd_loss_mean).item()
 
 fig, ax = plt.subplots(1, 1,figsize = (9, 9))
 
-losses = torch.zeros(len(seeds), len(n_layers))
-keys = loss_dict.keys()
-for idx, key in enumerate(keys):
-    losses[idx,:] = loss_dict[key]
-losses_mean = torch.mean(losses, axis=0)
-losses_std = torch.std(losses, axis=0)
+# we do that before
+# losses = torch.zeros(len(seeds), len(n_layers), len(chosen_combinations))
+# keys = loss_dict.keys()
+# for idx, key in enumerate(keys):
+#     losses[idx,:,:] = loss_dict[key]
+# losses_mean = torch.mean(losses, axis=(0,-1))
+# losses_std = torch.std(losses, axis=(0,-1))
 
 plt.plot(n_layers, gd_loss_mean, color='blue', label='GD')
 plt.fill_between(n_layers, gd_loss_mean - gd_loss_std, gd_loss_mean + gd_loss_std, color='blue', alpha=0.2)
@@ -727,7 +737,8 @@ plt.fill_between(n_layers, pgd_loss_mean - pgd_loss_std, pgd_loss_mean + pgd_los
 ax.plot(n_layers, losses_mean, color = 'red', lw = 3, label='Linear Transformer')
 ax.fill_between(n_layers, losses_mean-losses_std, losses_mean+losses_std, color = 'red', alpha = 0.2)
 
-plt.ylabel('log(Loss)',fontsize=30)
+# plt.ylabel('log(Loss)',fontsize=30)
+plt.ylabel('Loss',fontsize=30)
 plt.xlabel('Number of Layers/Steps',fontsize=30)
 ax.tick_params(axis='both', which='major', labelsize=30, width = 3, length = 10)
 ax.tick_params(axis='both', which='minor', labelsize=20, width = 3, length = 5)
@@ -771,7 +782,7 @@ variables_list = [
     else (i, 'n/a')
     for i in [
         'mode', 'B', 'var', 'shape_k', # data
-        'd', 'N', 'n_layer', 'n_head', # model
+        'd', 'N', 'n_layers', 'n_head', # model
         'alg', 'clip_r', 'max_iters',  # training
         'lr', 'half_lr_each_nth_step',
         'gen_new_inplace_each',
